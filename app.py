@@ -9,7 +9,7 @@ from pyproj import Transformer
 
 # --- Streamlit Page Setup ---
 st.set_page_config(
-    page_title="Sri Lanka Grid (SLD99) Converter - K.D.R.W.",
+    page_title="Sri Lanka Grid (SLD99) Converter - K.D.R.W",
     page_icon="🗺️",
     layout="centered"
 )
