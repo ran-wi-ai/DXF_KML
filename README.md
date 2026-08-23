@@ -8,6 +8,8 @@ A lightweight web application built with Streamlit to perform bi-directional coo
 * **KML to DXF Conversion:** Converts Google Earth placemarks and linestrings back to AutoCAD DXF entities in **SLD99** coordinates, with customizable text height for labels[cite: 2, 3].
 * **Web-Based UI:** Simple drag-and-drop file processing in the browser with zero software installation required.
 
+-Ranjith Wijekoon/2026 August
+
 ## 🛠️ Built With
 
 * [Streamlit](https://streamlit.io/)
