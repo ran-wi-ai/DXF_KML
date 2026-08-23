@@ -9,12 +9,12 @@ from pyproj import Transformer
 
 # --- Streamlit Page Setup ---
 st.set_page_config(
-    page_title="Sri Lanka Grid (SLD99) Converter - K.D.R.W",
+    page_title="Sri Lanka Grid (SLD99) Converter",
     page_icon="🗺️",
     layout="centered"
 )
 
-st.title("🗺️ SLD99 ↔ WGS84 Cadastral Converter")
+st.title("🗺️ SLD99 ↔ WGS84 Cadastral Converter- K.D.R.W")
 st.write("Convert CAD DXF files (**EPSG:5235 / SLD99**) to Google Earth KML files (**EPSG:4326 / WGS84**) and vice versa.")
 
 # Define Transformers globally
