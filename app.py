@@ -161,7 +161,7 @@ with tab2:
     st.subheader("Convert KML (WGS84) to DXF (SLD99)")
     uploaded_kml = st.file_uploader("Choose a KML file", type=["kml"], key="kml_input")
     # text_h = st.number_input("AutoCAD Text Height (meters)", value=2.5, step=0.5)
-    text_h = st.number_input("AutoCAD Text Height (meters)", value=2, min_value=1, step=0.5, format="%d")
+    text_h = st.number_input("AutoCAD Text Height (meters)", value=2, min_value=1, step=1, format="%d")
 
     if uploaded_kml:
         if st.button("Convert KML to DXF"):
