@@ -79,7 +79,8 @@ def convert_kml_to_dxf(kml_file_path, text_height=2.5):
     root = tree.getroot()
     ns = {'kml': 'http://www.opengis.net/kml/2.2'}
 
-    doc = ezdxf.new(dxfversion='R2010')
+    # doc = ezdxf.new(dxfversion='R2010')
+    doc = ezdxf.new(dxfversion='R13')
     msp = doc.modelspace()
 
     def parse_coordinates(coord_str):
