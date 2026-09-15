@@ -14,7 +14,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🗺️ SLD99 ↔ WGS84 Converter- Ranjith Wijekoon, RLS")
+st.title("🗺️ SLD99 ↔ WGS84 Converter- ranjith.wijekoon@gmail.com")
 st.write("Convert CAD DXF files (**EPSG:5235 / SLD99**) to Google Earth KML files (**EPSG:4326 / WGS84**) and vice versa.")
 
 # Define Transformers globally
