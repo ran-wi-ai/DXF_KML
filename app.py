@@ -1,10 +1,31 @@
-def convert_dxf_to_kml(dxf_file_path, epsg_code, swap_xy=False):
-    transformer = Transformer.from_crs(f"EPSG:{epsg_code}", "EPSG:4326", always_xy=True)
+import streamlit as st
+import tempfile
+import os
+import ezdxf
+from ezdxf import path
+import simplekml
+import xml.etree.ElementTree as ET
+from pyproj import Transformer
 
+# --- Streamlit Page Setup ---
+st.set_page_config(
+    page_title="SLD99 CAD & KML Converter - K.D.R.W.",
+    page_icon="🗺️",
+    layout="centered"
+)
+
+st.title("🗺️ SLD99 CAD ↔ KML Converter")
+st.write("Convert CAD DXF files in **SLD99 Grid (EPSG:5235)** to Google Earth KML files (**EPSG:4326 / WGS84**) and vice versa.")
+
+# --- EPSG:5235 (SLD99) Transformers ---
+transformer_to_wgs84 = Transformer.from_crs("EPSG:5235", "EPSG:4326", always_xy=True)
+transformer_to_sld99 = Transformer.from_crs("EPSG:4326", "EPSG:5235", always_xy=True)
+
+# --- Core Conversion Functions ---
+
+def convert_dxf_to_kml(dxf_file_path):
     def transform_coords(x, y, z=0.0):
-        # Invert X and Y if local grid definition uses inverted axis order
-        easting, northing = (y, x) if swap_xy else (x, y)
-        lon, lat = transformer.transform(easting, northing)
+        lon, lat = transformer_to_wgs84.transform(x, y)
         return (lon, lat, z)
 
     doc = ezdxf.readfile(dxf_file_path)
@@ -49,18 +70,16 @@ def convert_dxf_to_kml(dxf_file_path, epsg_code, swap_xy=False):
 
     return kml
 
-def convert_kml_to_dxf(kml_file_path, epsg_code, text_height=2, swap_xy=False):
-    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg_code}", always_xy=True)
-
+def convert_kml_to_dxf(kml_file_path, text_height=2):
     def transform_coords(lon, lat, alt=0.0):
-        easting, northing = transformer.transform(lon, lat)
-        x, y = (northing, easting) if swap_xy else (easting, northing)
+        x, y = transformer_to_sld99.transform(lon, lat)
         return (x, y, alt)
 
     tree = ET.parse(kml_file_path)
     root = tree.getroot()
     ns = {'kml': 'http://www.opengis.net/kml/2.2'}
 
+    # Outputs R12 (AC1009) legacy format for max compatibility
     doc = ezdxf.new(dxfversion='R12')
     msp = doc.modelspace()
 
@@ -97,3 +116,76 @@ def convert_kml_to_dxf(kml_file_path, epsg_code, text_height=2, swap_xy=False):
                     msp.add_polyline3d(pts)
 
     return doc
+
+# --- Web UI Tabs ---
+
+tab1, tab2 = st.tabs(["📄 DXF → KML", "🌐 KML → DXF"])
+
+with tab1:
+    st.subheader("Convert SLD99 DXF to KML")
+    uploaded_dxf = st.file_uploader("Choose an SLD99 DXF file", type=["dxf"], key="dxf_input")
+
+    if uploaded_dxf:
+        if st.button("Convert DXF to KML"):
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_in:
+                    tmp_in.write(uploaded_dxf.getvalue())
+                    tmp_in_path = tmp_in.name
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".kml") as tmp_out:
+                    tmp_out_path = tmp_out.name
+
+                kml_obj = convert_dxf_to_kml(tmp_in_path)
+                kml_obj.save(tmp_out_path)
+
+                with open(tmp_out_path, "rb") as f:
+                    kml_bytes = f.read()
+
+                st.success("Conversion complete!")
+                st.download_button(
+                    label="📥 Download KML File",
+                    data=kml_bytes,
+                    file_name=f"{os.path.splitext(uploaded_dxf.name)[0]}.kml",
+                    mime="application/vnd.google-earth.kml+xml"
+                )
+
+                os.remove(tmp_in_path)
+                os.remove(tmp_out_path)
+
+            except Exception as e:
+                st.error(f"Error converting DXF: {str(e)}")
+
+with tab2:
+    st.subheader("Convert KML to SLD99 DXF")
+    uploaded_kml = st.file_uploader("Choose a KML file", type=["kml"], key="kml_input")
+    text_h = st.number_input("AutoCAD Text Height (meters)", value=2, min_value=1, step=1, format="%d")
+
+    if uploaded_kml:
+        if st.button("Convert KML to DXF"):
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".kml") as tmp_in:
+                    tmp_in.write(uploaded_kml.getvalue())
+                    tmp_in_path = tmp_in.name
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_out:
+                    tmp_out_path = tmp_out.name
+
+                doc_obj = convert_kml_to_dxf(tmp_in_path, text_height=text_h)
+                doc_obj.saveas(tmp_out_path)
+
+                with open(tmp_out_path, "rb") as f:
+                    dxf_bytes = f.read()
+
+                st.success("Conversion complete!")
+                st.download_button(
+                    label="📥 Download DXF File",
+                    data=dxf_bytes,
+                    file_name=f"{os.path.splitext(uploaded_kml.name)[0]}.dxf",
+                    mime="application/dxf"
+                )
+
+                os.remove(tmp_in_path)
+                os.remove(tmp_out_path)
+
+            except Exception as e:
+                st.error(f"Error converting KML: {str(e)}")
