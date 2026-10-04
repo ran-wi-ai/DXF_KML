@@ -2,12 +2,17 @@ import io
 import tempfile
 import streamlit as st
 import ezdxf
+from ezdxf import options
 from ezdxf.bbox import extents
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
 from ezdxf.addons.drawing.properties import LayoutProperties
+from ezdxf.addons.drawing.config import Configuration
 import matplotlib.pyplot as plt
 from PIL import Image
+
+# Enable font loading and SHX font support in ezdxf
+options.load_text_layout = True
 
 st.set_page_config(
     page_title="CAD (DXF) to PDF / Image Converter",
@@ -21,7 +26,6 @@ st.write("Upload a DXF file to view and export to PDF (1:1 scale), PNG, or JPG f
 # Sidebar Settings
 st.sidebar.header("Export Settings")
 
-# Clear Output Format Radio Buttons
 output_format = st.sidebar.radio(
     "Select Output Format",
     ["PDF", "PNG", "JPG"],
@@ -103,14 +107,21 @@ if uploaded_file is not None:
         ax.set_facecolor(bg_color)
         fig.patch.set_facecolor(bg_color)
 
-        # Context & Layout Properties to force high-visibility rendering
+        # Configure drawing properties and explicit text rendering
         ctx = RenderContext(doc)
         layout_props = LayoutProperties.from_layout(msp)
         if default_color:
             layout_props.set_colors(bg_color, default_color)
 
+        # Drawing Configuration: ensure text and hatch entities are explicitly rendered
+        drawing_config = Configuration(
+            draw_hatches=True,
+            draw_filled_paths=True,
+            draw_text=True
+        )
+
         out = MatplotlibBackend(ax)
-        frontend = Frontend(ctx, out)
+        frontend = Frontend(ctx, out, config=drawing_config)
         frontend.draw_layout(msp, layout_properties=layout_props, finalize=True)
 
         # Explicitly enforce coordinate limits matching the bounding box
