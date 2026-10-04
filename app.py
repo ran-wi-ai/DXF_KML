@@ -21,7 +21,12 @@ st.write("Upload a DXF file to view and export to PDF (1:1 scale), PNG, or JPG f
 # Sidebar Settings
 st.sidebar.header("Export Settings")
 
-output_format = st.sidebar.radio("Output Format", ["PDF (1:1 Scale)", "PNG", "JPG"])
+# Clear Output Format Radio Buttons
+output_format = st.sidebar.radio(
+    "Select Output Format",
+    ["PDF", "PNG", "JPG"],
+    index=0
+)
 
 dxf_unit = st.sidebar.selectbox(
     "Drawing Units in DXF",
@@ -117,7 +122,7 @@ if uploaded_file is not None:
         # --- EXPORT TO BUFFER BEFORE PREVIEW ---
         export_buffer = io.BytesIO()
 
-        if output_format == "PDF (1:1 Scale)":
+        if output_format == "PDF":
             fig.savefig(
                 export_buffer,
                 format="pdf",
@@ -168,7 +173,7 @@ if uploaded_file is not None:
         output_filename = f"{clean_name}_converted.{file_ext}"
 
         st.download_button(
-            label=f"📥 Download {output_format.split(' ')[0]}",
+            label=f"📥 Download {output_format}",
             data=export_buffer,
             file_name=output_filename,
             mime=mime_type
