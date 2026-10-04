@@ -23,14 +23,17 @@ st.set_page_config(
 st.title("📐 DXF to PDF / Image Converter")
 st.write("Upload a DXF file to view and export to PDF (1:1 scale), PNG, or JPG format.")
 
-# Sidebar Settings
-st.sidebar.header("Export Settings")
-
-output_format = st.sidebar.radio(
-    "Select Output Format",
+# Main Panel Controls (Prominent & Unmissable)
+st.subheader("1. Export Format Selection")
+output_format = st.radio(
+    "Select Output Format:",
     ["PDF", "PNG", "JPG"],
-    index=0
+    index=0,
+    horizontal=True
 )
+
+# Sidebar Settings for Fine-Tuning
+st.sidebar.header("Advanced Settings")
 
 dxf_unit = st.sidebar.selectbox(
     "Drawing Units in DXF",
@@ -53,6 +56,7 @@ unit_scale_to_inches = {
     "Inches (in)": 1.0
 }
 
+st.subheader("2. Upload DXF File")
 uploaded_file = st.file_uploader("Choose a DXF file", type=["dxf"])
 
 if uploaded_file is not None:
@@ -113,7 +117,7 @@ if uploaded_file is not None:
         if default_color:
             layout_props.set_colors(bg_color, default_color)
 
-        # Robust Configuration using default properties
+        # Configuration using default properties
         drawing_config = Configuration.defaults()
 
         out = MatplotlibBackend(ax)
@@ -171,7 +175,7 @@ if uploaded_file is not None:
         export_buffer.seek(0)
 
         # --- RENDER PREVIEW IN STREAMLIT ---
-        st.subheader("Preview")
+        st.subheader("3. Preview")
         st.pyplot(fig)
         plt.close(fig)
 
