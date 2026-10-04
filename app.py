@@ -16,7 +16,7 @@ st.set_page_config(
 
 st.title("🗺️ SLD99 CAD ↔ KML Converter")
 st.write("Convert CAD DXF files in **SLD99 Grid (EPSG:5235)** to Google Earth KML files (**EPSG:4326 / WGS84**) and vice versa.")
-
+st.write("Bugs/suggestions to ranjith.wijekoon@gmail.com")
 # --- EPSG:5235 (SLD99) Transformers ---
 transformer_to_wgs84 = Transformer.from_crs("EPSG:5235", "EPSG:4326", always_xy=True)
 transformer_to_sld99 = Transformer.from_crs("EPSG:4326", "EPSG:5235", always_xy=True)
