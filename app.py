@@ -1,198 +1,178 @@
-import streamlit as st
+import io
 import tempfile
-import os
+import streamlit as st
 import ezdxf
-from ezdxf import path
-import simplekml
-import xml.etree.ElementTree as ET
-from pyproj import Transformer
+from ezdxf.bbox import extents
+from ezdxf.addons.drawing import RenderContext, Frontend
+from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+from ezdxf.addons.drawing.properties import LayoutProperties
+import matplotlib.pyplot as plt
+from PIL import Image
 
-# --- Streamlit Page Setup ---
 st.set_page_config(
-    page_title="Sri Lanka Grid (SLD99) Converter",
-    page_icon="🗺️",
-    layout="centered"
+    page_title="CAD (DXF) to PDF / Image Converter",
+    page_icon="📐",
+    layout="wide"
 )
 
-st.title("🗺️ SLD99 ↔ WGS84 Converter- ranjith.wijekoon@gmail.com")
-st.write("Convert CAD DXF files (**EPSG:5235 / SLD99**) to Google Earth KML files (**EPSG:4326 / WGS84**) and vice versa.")
+st.title("📐 DXF to PDF / Image Converter")
+st.write("Upload a DXF file to view and export to PDF (1:1 scale), PNG, or JPG format.")
 
-# Define Transformers globally
-transformer_to_wgs84 = Transformer.from_crs("EPSG:5235", "EPSG:4326", always_xy=True)
-transformer_to_sld99 = Transformer.from_crs("EPSG:4326", "EPSG:5235", always_xy=True)
+# Sidebar Settings
+st.sidebar.header("Export Settings")
 
-# --- Core Conversion Functions ---
+output_format = st.sidebar.radio("Output Format", ["PDF (1:1 Scale)", "PNG", "JPG"])
 
-def convert_dxf_to_kml(dxf_file_path):
-    def transform_coords(x, y, z=0.0):
-        lon, lat = transformer_to_wgs84.transform(x, y)
-        return (lon, lat, z)
+dxf_unit = st.sidebar.selectbox(
+    "Drawing Units in DXF",
+    ["Millimeters (mm)", "Meters (m)", "Inches (in)"],
+    index=0
+)
 
-    doc = ezdxf.readfile(dxf_file_path)
-    msp = doc.modelspace()
-    kml = simplekml.Kml()
+dpi = st.sidebar.slider("DPI (Resolution for PNG/JPG)", min_value=100, max_value=600, value=300, step=50)
 
-    for entity in msp:
-        dxftype = entity.dxftype()
+color_theme = st.sidebar.selectbox(
+    "Color Theme",
+    ["Black Lines on White Background", "White Lines on Black Background", "CAD Native Colors"],
+    index=0
+)
 
-        if dxftype == 'POINT':
-            x, y, z = entity.dxf.location
-            kml.newpoint(coords=[transform_coords(x, y, z)])
+# Conversion factors to inches for physical paper/canvas sizing
+unit_scale_to_inches = {
+    "Millimeters (mm)": 1.0 / 25.4,
+    "Meters (m)": 1000.0 / 25.4,
+    "Inches (in)": 1.0
+}
 
-        elif dxftype == 'LINE':
-            start, end = entity.dxf.start, entity.dxf.end
-            pt1 = transform_coords(start.x, start.y, start.z)
-            pt2 = transform_coords(end.x, end.y, end.z)
-            kml.newlinestring(coords=[pt1, pt2])
+uploaded_file = st.file_uploader("Choose a DXF file", type=["dxf"])
 
-        elif dxftype in ['LWPOLYLINE', 'POLYLINE', 'SPLINE']:
-            try:
-                p = path.make_path(entity)
-                vertices = [transform_coords(pt.x, pt.y, pt.z) for pt in p.flattening(distance=0.1)]
-                if len(vertices) >= 2:
-                    kml.newlinestring(coords=vertices)
-            except Exception:
-                pass
+if uploaded_file is not None:
+    try:
+        # Save temporary DXF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_path = tmp_file.name
 
-        elif dxftype == 'ARC':
-            try:
-                p = path.make_path(entity)
-                vertices = [transform_coords(pt.x, pt.y, pt.z) for pt in p.flattening(distance=0.1)]
-                if len(vertices) >= 2:
-                    kml.newlinestring(coords=vertices)
-            except Exception:
-                pass
+        doc = ezdxf.readfile(tmp_path)
+        msp = doc.modelspace()
 
-        elif dxftype in ['TEXT', 'MTEXT']:
-            text_content = entity.plain_text() if dxftype == 'MTEXT' else entity.dxf.text
-            insert = entity.dxf.insert
-            kml.newpoint(name=text_content, coords=[transform_coords(insert.x, insert.y, insert.z)])
+        # Compute bounding box of entities in modelspace
+        bbox = extents(msp)
+        if not bbox.has_data:
+            st.error("The DXF file appears to be empty or contains no valid geometry in Modelspace.")
+            st.stop()
 
-    return kml
+        min_x, min_y, _ = bbox.extmin
+        max_x, max_y, _ = bbox.extmax
 
-def convert_kml_to_dxf(kml_file_path, text_height=2.5):
-    def transform_coords(lon, lat, alt=0.0):
-        x, y = transformer_to_sld99.transform(lon, lat)
-        return (x, y, alt)
+        width_units = max_x - min_x
+        height_units = max_y - min_y
 
-    tree = ET.parse(kml_file_path)
-    root = tree.getroot()
-    ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+        if width_units <= 0 or height_units <= 0:
+            st.error("Could not compute valid non-zero bounding box dimensions for this file.")
+            st.stop()
 
-    #doc = ezdxf.new(dxfversion='R2010')
-    doc = ezdxf.new(dxfversion='R12')
-    msp = doc.modelspace()
+        st.info(f"**Bounding Box Extents:** {width_units:.2f} × {height_units:.2f} drawing units")
 
-    def parse_coordinates(coord_str):
-        points = []
-        for coord in coord_str.strip().split():
-            parts = coord.split(',')
-            if len(parts) >= 2:
-                lon, lat = float(parts[0]), float(parts[1])
-                alt = float(parts[2]) if len(parts) >= 3 else 0.0
-                points.append(transform_coords(lon, lat, alt))
-        return points
+        # Convert units to physical inches for 1:1 scale
+        scale_factor = unit_scale_to_inches[dxf_unit]
+        pdf_width_in = width_units * scale_factor
+        pdf_height_in = height_units * scale_factor
 
-    for placemark in root.findall('.//kml:Placemark', ns):
-        name_elem = placemark.find('kml:name', ns)
-        name = name_elem.text if name_elem is not None else "Unnamed"
+        st.write(f"**Target Dimensions (1:1 Scale):** {pdf_width_in:.2f} in × {pdf_height_in:.2f} in ({pdf_width_in * 25.4:.1f} mm × {pdf_height_in * 25.4:.1f} mm)")
 
-        point = placemark.find('.//kml:Point', ns)
-        if point is not None:
-            coord_elem = point.find('kml:coordinates', ns)
-            if coord_elem is not None and coord_elem.text:
-                pts = parse_coordinates(coord_elem.text)
-                if pts:
-                    insertion_pt = pts[0]
-                    msp.add_point(insertion_pt)
-                    msp.add_text(name, dxfattribs={'height': text_height}).set_placement(insertion_pt)
+        # Determine Background & Line Colors
+        if "Black Lines" in color_theme:
+            bg_color = "#FFFFFF"
+            default_color = "#000000"
+        elif "White Lines" in color_theme:
+            bg_color = "#000000"
+            default_color = "#FFFFFF"
+        else:
+            bg_color = "#FFFFFF"
+            default_color = None
 
-        linestring = placemark.find('.//kml:LineString', ns)
-        if linestring is not None:
-            coord_elem = linestring.find('kml:coordinates', ns)
-            if coord_elem is not None and coord_elem.text:
-                pts = parse_coordinates(coord_elem.text)
-                if len(pts) >= 2:
-                    msp.add_polyline3d(pts)
+        # Setup Figure matching exact drawing physical aspect ratio
+        fig = plt.figure(figsize=(pdf_width_in, pdf_height_in), dpi=dpi)
+        ax = fig.add_axes([0, 0, 1, 1])
+        ax.set_facecolor(bg_color)
+        fig.patch.set_facecolor(bg_color)
 
-    return doc
+        # Context & Layout Properties to force high-visibility rendering
+        ctx = RenderContext(doc)
+        layout_props = LayoutProperties.from_layout(msp)
+        if default_color:
+            layout_props.set_colors(bg_color, default_color)
 
-# --- Web UI Tabs ---
+        out = MatplotlibBackend(ax)
+        frontend = Frontend(ctx, out)
+        frontend.draw_layout(msp, layout_properties=layout_props, finalize=True)
 
-tab1, tab2 = st.tabs(["📄 DXF → KML", "🌐 KML → DXF"])
+        # Explicitly enforce coordinate limits matching the bounding box
+        ax.set_xlim(min_x, max_x)
+        ax.set_ylim(min_y, max_y)
+        ax.set_aspect("equal", adjustable="box")
+        ax.axis("off")
 
-with tab1:
-    st.subheader("Convert DXF (SLD99) to KML (WGS84)")
-    uploaded_dxf = st.file_uploader("Choose a DXF file", type=["dxf"], key="dxf_input")
+        # --- EXPORT TO BUFFER BEFORE PREVIEW ---
+        export_buffer = io.BytesIO()
 
-    if uploaded_dxf:
-        if st.button("Convert DXF to KML"):
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_in:
-                    tmp_in.write(uploaded_dxf.getvalue())
-                    tmp_in_path = tmp_in.name
+        if output_format == "PDF (1:1 Scale)":
+            fig.savefig(
+                export_buffer,
+                format="pdf",
+                bbox_inches="tight",
+                pad_inches=0,
+                facecolor=bg_color
+            )
+            mime_type = "application/pdf"
+            file_ext = "pdf"
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".kml") as tmp_out:
-                    tmp_out_path = tmp_out.name
+        elif output_format == "PNG":
+            fig.savefig(
+                export_buffer,
+                format="png",
+                bbox_inches="tight",
+                pad_inches=0,
+                facecolor=bg_color,
+                dpi=dpi
+            )
+            mime_type = "image/png"
+            file_ext = "png"
 
-                # Run conversion
-                kml_obj = convert_dxf_to_kml(tmp_in_path)
-                kml_obj.save(tmp_out_path)
+        else:  # JPG
+            fig.savefig(
+                export_buffer,
+                format="png",
+                bbox_inches="tight",
+                pad_inches=0,
+                facecolor=bg_color,
+                dpi=dpi
+            )
+            export_buffer.seek(0)
+            pil_img = Image.open(export_buffer).convert("RGB")
+            export_buffer = io.BytesIO()
+            pil_img.save(export_buffer, format="JPEG", quality=95)
+            mime_type = "image/jpeg"
+            file_ext = "jpg"
 
-                # Read output
-                with open(tmp_out_path, "rb") as f:
-                    kml_bytes = f.read()
+        export_buffer.seek(0)
 
-                st.success("Conversion complete!")
-                st.download_button(
-                    label="📥 Download KML File",
-                    data=kml_bytes,
-                    file_name=f"{os.path.splitext(uploaded_dxf.name)[0]}.kml",
-                    mime="application/vnd.google-earth.kml+xml"
-                )
+        # --- RENDER PREVIEW IN STREAMLIT ---
+        st.subheader("Preview")
+        st.pyplot(fig)
+        plt.close(fig)
 
-                # Cleanup
-                os.remove(tmp_in_path)
-                os.remove(tmp_out_path)
+        # --- DOWNLOAD BUTTON ---
+        clean_name = uploaded_file.name.rsplit('.', 1)[0]
+        output_filename = f"{clean_name}_converted.{file_ext}"
 
-            except Exception as e:
-                st.error(f"Error converting DXF: {str(e)}")
+        st.download_button(
+            label=f"📥 Download {output_format.split(' ')[0]}",
+            data=export_buffer,
+            file_name=output_filename,
+            mime=mime_type
+        )
 
-with tab2:
-    st.subheader("Convert KML (WGS84) to DXF (SLD99)")
-    uploaded_kml = st.file_uploader("Choose a KML file", type=["kml"], key="kml_input")
-    # text_h = st.number_input("AutoCAD Text Height (meters)", value=2.5, step=0.5)
-    text_h = st.number_input("AutoCAD Text Height (meters)", value=2, min_value=1, step=1, format="%d")
-
-    if uploaded_kml:
-        if st.button("Convert KML to DXF"):
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".kml") as tmp_in:
-                    tmp_in.write(uploaded_kml.getvalue())
-                    tmp_in_path = tmp_in.name
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_out:
-                    tmp_out_path = tmp_out.name
-
-                # Run conversion
-                doc_obj = convert_kml_to_dxf(tmp_in_path, text_height=text_h)
-                doc_obj.saveas(tmp_out_path)
-
-                # Read output
-                with open(tmp_out_path, "rb") as f:
-                    dxf_bytes = f.read()
-
-                st.success("Conversion complete!")
-                st.download_button(
-                    label="📥 Download DXF File",
-                    data=dxf_bytes,
-                    file_name=f"{os.path.splitext(uploaded_kml.name)[0]}.dxf",
-                    mime="application/dxf"
-                )
-
-                # Cleanup
-                os.remove(tmp_in_path)
-                os.remove(tmp_out_path)
-
-            except Exception as e:
-                st.error(f"Error converting KML: {str(e)}")
+    except Exception as e:
+        st.error(f"Error processing DXF file: {e}")
