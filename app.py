@@ -1,194 +1,99 @@
-import io
-import tempfile
-import streamlit as st
-import ezdxf
-from ezdxf import options
-from ezdxf.bbox import extents
-from ezdxf.addons.drawing import RenderContext, Frontend
-from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
-from ezdxf.addons.drawing.properties import LayoutProperties
-from ezdxf.addons.drawing.config import Configuration
-import matplotlib.pyplot as plt
-from PIL import Image
+def convert_dxf_to_kml(dxf_file_path, epsg_code, swap_xy=False):
+    transformer = Transformer.from_crs(f"EPSG:{epsg_code}", "EPSG:4326", always_xy=True)
 
-# Enable text layout processing
-options.load_text_layout = True
+    def transform_coords(x, y, z=0.0):
+        # Invert X and Y if local grid definition uses inverted axis order
+        easting, northing = (y, x) if swap_xy else (x, y)
+        lon, lat = transformer.transform(easting, northing)
+        return (lon, lat, z)
 
-st.set_page_config(
-    page_title="CAD (DXF) to PDF / Image Converter",
-    page_icon="📐",
-    layout="wide"
-)
+    doc = ezdxf.readfile(dxf_file_path)
+    msp = doc.modelspace()
+    kml = simplekml.Kml()
 
-st.title("📐 DXF to PDF / Image Converter")
-st.write("Upload a DXF file to view and export to PDF (1:1 scale), PNG, or JPG format.")
+    for entity in msp:
+        dxftype = entity.dxftype()
 
-# Main Panel Controls (Prominent & Unmissable)
-st.subheader("1. Export Format Selection")
-output_format = st.radio(
-    "Select Output Format:",
-    ["PDF", "PNG", "JPG"],
-    index=0,
-    horizontal=True
-)
+        if dxftype == 'POINT':
+            x, y, z = entity.dxf.location
+            kml.newpoint(coords=[transform_coords(x, y, z)])
 
-# Sidebar Settings for Fine-Tuning
-st.sidebar.header("Advanced Settings")
+        elif dxftype == 'LINE':
+            start, end = entity.dxf.start, entity.dxf.end
+            pt1 = transform_coords(start.x, start.y, start.z)
+            pt2 = transform_coords(end.x, end.y, end.z)
+            kml.newlinestring(coords=[pt1, pt2])
 
-dxf_unit = st.sidebar.selectbox(
-    "Drawing Units in DXF",
-    ["Millimeters (mm)", "Meters (m)", "Inches (in)"],
-    index=0
-)
+        elif dxftype in ['LWPOLYLINE', 'POLYLINE', 'SPLINE']:
+            try:
+                p = path.make_path(entity)
+                vertices = [transform_coords(pt.x, pt.y, pt.z) for pt in p.flattening(distance=0.1)]
+                if len(vertices) >= 2:
+                    kml.newlinestring(coords=vertices)
+            except Exception:
+                pass
 
-dpi = st.sidebar.slider("DPI (Resolution for PNG/JPG)", min_value=100, max_value=600, value=300, step=50)
+        elif dxftype == 'ARC':
+            try:
+                p = path.make_path(entity)
+                vertices = [transform_coords(pt.x, pt.y, pt.z) for pt in p.flattening(distance=0.1)]
+                if len(vertices) >= 2:
+                    kml.newlinestring(coords=vertices)
+            except Exception:
+                pass
 
-color_theme = st.sidebar.selectbox(
-    "Color Theme",
-    ["Black Lines on White Background", "White Lines on Black Background", "CAD Native Colors"],
-    index=0
-)
+        elif dxftype in ['TEXT', 'MTEXT']:
+            text_content = entity.plain_text() if dxftype == 'MTEXT' else entity.dxf.text
+            insert = entity.dxf.insert
+            kml.newpoint(name=text_content, coords=[transform_coords(insert.x, insert.y, insert.z)])
 
-# Conversion factors to inches for physical paper/canvas sizing
-unit_scale_to_inches = {
-    "Millimeters (mm)": 1.0 / 25.4,
-    "Meters (m)": 1000.0 / 25.4,
-    "Inches (in)": 1.0
-}
+    return kml
 
-st.subheader("2. Upload DXF File")
-uploaded_file = st.file_uploader("Choose a DXF file", type=["dxf"])
+def convert_kml_to_dxf(kml_file_path, epsg_code, text_height=2, swap_xy=False):
+    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg_code}", always_xy=True)
 
-if uploaded_file is not None:
-    try:
-        # Save temporary DXF
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_path = tmp_file.name
+    def transform_coords(lon, lat, alt=0.0):
+        easting, northing = transformer.transform(lon, lat)
+        x, y = (northing, easting) if swap_xy else (easting, northing)
+        return (x, y, alt)
 
-        doc = ezdxf.readfile(tmp_path)
-        msp = doc.modelspace()
+    tree = ET.parse(kml_file_path)
+    root = tree.getroot()
+    ns = {'kml': 'http://www.opengis.net/kml/2.2'}
 
-        # Compute bounding box of entities in modelspace
-        bbox = extents(msp)
-        if not bbox.has_data:
-            st.error("The DXF file appears to be empty or contains no valid geometry in Modelspace.")
-            st.stop()
+    doc = ezdxf.new(dxfversion='R12')
+    msp = doc.modelspace()
 
-        min_x, min_y, _ = bbox.extmin
-        max_x, max_y, _ = bbox.extmax
+    def parse_coordinates(coord_str):
+        points = []
+        for coord in coord_str.strip().split():
+            parts = coord.split(',')
+            if len(parts) >= 2:
+                lon, lat = float(parts[0]), float(parts[1])
+                alt = float(parts[2]) if len(parts) >= 3 else 0.0
+                points.append(transform_coords(lon, lat, alt))
+        return points
 
-        width_units = max_x - min_x
-        height_units = max_y - min_y
+    for placemark in root.findall('.//kml:Placemark', ns):
+        name_elem = placemark.find('kml:name', ns)
+        name = name_elem.text if name_elem is not None else "Unnamed"
 
-        if width_units <= 0 or height_units <= 0:
-            st.error("Could not compute valid non-zero bounding box dimensions for this file.")
-            st.stop()
+        point = placemark.find('.//kml:Point', ns)
+        if point is not None:
+            coord_elem = point.find('kml:coordinates', ns)
+            if coord_elem is not None and coord_elem.text:
+                pts = parse_coordinates(coord_elem.text)
+                if pts:
+                    insertion_pt = pts[0]
+                    msp.add_point(insertion_pt)
+                    msp.add_text(name, dxfattribs={'height': text_height}).set_placement(insertion_pt)
 
-        st.info(f"**Bounding Box Extents:** {width_units:.2f} × {height_units:.2f} drawing units")
+        linestring = placemark.find('.//kml:LineString', ns)
+        if linestring is not None:
+            coord_elem = linestring.find('kml:coordinates', ns)
+            if coord_elem is not None and coord_elem.text:
+                pts = parse_coordinates(coord_elem.text)
+                if len(pts) >= 2:
+                    msp.add_polyline3d(pts)
 
-        # Convert units to physical inches for 1:1 scale
-        scale_factor = unit_scale_to_inches[dxf_unit]
-        pdf_width_in = width_units * scale_factor
-        pdf_height_in = height_units * scale_factor
-
-        st.write(f"**Target Dimensions (1:1 Scale):** {pdf_width_in:.2f} in × {pdf_height_in:.2f} in ({pdf_width_in * 25.4:.1f} mm × {pdf_height_in * 25.4:.1f} mm)")
-
-        # Determine Background & Line Colors
-        if "Black Lines" in color_theme:
-            bg_color = "#FFFFFF"
-            default_color = "#000000"
-        elif "White Lines" in color_theme:
-            bg_color = "#000000"
-            default_color = "#FFFFFF"
-        else:
-            bg_color = "#FFFFFF"
-            default_color = None
-
-        # Setup Figure matching exact drawing physical aspect ratio
-        fig = plt.figure(figsize=(pdf_width_in, pdf_height_in), dpi=dpi)
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.set_facecolor(bg_color)
-        fig.patch.set_facecolor(bg_color)
-
-        # Context & Layout Properties setup
-        ctx = RenderContext(doc)
-        layout_props = LayoutProperties.from_layout(msp)
-        if default_color:
-            layout_props.set_colors(bg_color, default_color)
-
-        # Configuration using default properties
-        drawing_config = Configuration.defaults()
-
-        out = MatplotlibBackend(ax)
-        frontend = Frontend(ctx, out, config=drawing_config)
-        frontend.draw_layout(msp, layout_properties=layout_props, finalize=True)
-
-        # Explicitly enforce coordinate limits matching the bounding box
-        ax.set_xlim(min_x, max_x)
-        ax.set_ylim(min_y, max_y)
-        ax.set_aspect("equal", adjustable="box")
-        ax.axis("off")
-
-        # --- EXPORT TO BUFFER BEFORE PREVIEW ---
-        export_buffer = io.BytesIO()
-
-        if output_format == "PDF":
-            fig.savefig(
-                export_buffer,
-                format="pdf",
-                bbox_inches="tight",
-                pad_inches=0,
-                facecolor=bg_color
-            )
-            mime_type = "application/pdf"
-            file_ext = "pdf"
-
-        elif output_format == "PNG":
-            fig.savefig(
-                export_buffer,
-                format="png",
-                bbox_inches="tight",
-                pad_inches=0,
-                facecolor=bg_color,
-                dpi=dpi
-            )
-            mime_type = "image/png"
-            file_ext = "png"
-
-        else:  # JPG
-            fig.savefig(
-                export_buffer,
-                format="png",
-                bbox_inches="tight",
-                pad_inches=0,
-                facecolor=bg_color,
-                dpi=dpi
-            )
-            export_buffer.seek(0)
-            pil_img = Image.open(export_buffer).convert("RGB")
-            export_buffer = io.BytesIO()
-            pil_img.save(export_buffer, format="JPEG", quality=95)
-            mime_type = "image/jpeg"
-            file_ext = "jpg"
-
-        export_buffer.seek(0)
-
-        # --- RENDER PREVIEW IN STREAMLIT ---
-        st.subheader("3. Preview")
-        st.pyplot(fig)
-        plt.close(fig)
-
-        # --- DOWNLOAD BUTTON ---
-        clean_name = uploaded_file.name.rsplit('.', 1)[0]
-        output_filename = f"{clean_name}_converted.{file_ext}"
-
-        st.download_button(
-            label=f"📥 Download {output_format}",
-            data=export_buffer,
-            file_name=output_filename,
-            mime=mime_type
-        )
-
-    except Exception as e:
-        st.error(f"Error processing DXF file: {e}")
+    return doc
