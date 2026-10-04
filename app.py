@@ -11,7 +11,7 @@ from ezdxf.addons.drawing.config import Configuration
 import matplotlib.pyplot as plt
 from PIL import Image
 
-# Enable font loading and SHX font support in ezdxf
+# Enable text layout processing
 options.load_text_layout = True
 
 st.set_page_config(
@@ -107,18 +107,14 @@ if uploaded_file is not None:
         ax.set_facecolor(bg_color)
         fig.patch.set_facecolor(bg_color)
 
-        # Configure drawing properties and explicit text rendering
+        # Context & Layout Properties setup
         ctx = RenderContext(doc)
         layout_props = LayoutProperties.from_layout(msp)
         if default_color:
             layout_props.set_colors(bg_color, default_color)
 
-        # Drawing Configuration: ensure text and hatch entities are explicitly rendered
-        drawing_config = Configuration(
-            draw_hatches=True,
-            draw_filled_paths=True,
-            draw_text=True
-        )
+        # Robust Configuration using default properties
+        drawing_config = Configuration.defaults()
 
         out = MatplotlibBackend(ax)
         frontend = Frontend(ctx, out, config=drawing_config)
